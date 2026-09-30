@@ -6,6 +6,7 @@ import { CURRENCY_CODES } from '../../domain/money';
 import {
   ACCOUNT_CLASSES,
   ACCOUNT_TYPES,
+  BUDGET_PERIODS,
   CATEGORY_KINDS,
   TRANSACTION_KINDS,
   TRANSACTION_SOURCES,
@@ -102,9 +103,43 @@ export const transactionEntries = sqliteTable(
   ],
 );
 
+export const budgets = sqliteTable(
+  'budgets',
+  {
+    ...syncColumns(),
+    name: text('name').notNull(),
+    period: text('period', { enum: BUDGET_PERIODS }).notNull(),
+    startOn: text('start_on').notNull(),
+    endOn: text('end_on'),
+    amountMinor: integer('amount_minor').notNull(),
+    currency: text('currency', { enum: CURRENCY_CODES }).notNull(),
+    rollover: integer('rollover', { mode: 'boolean' }).notNull().default(false),
+    alertThresholds: text('alert_thresholds', { mode: 'json' }).notNull().$type<number[]>(),
+  },
+  (t) => [index('budgets_user_idx').on(t.userId)],
+);
+
+/** Categories in a budget's scope; synced as part of the budget aggregate. */
+export const budgetCategories = sqliteTable(
+  'budget_categories',
+  {
+    ...syncColumns(),
+    budgetId: text('budget_id')
+      .notNull()
+      .references(() => budgets.id, { onDelete: 'cascade' }),
+    categoryId: text('category_id')
+      .notNull()
+      .references(() => categories.id),
+  },
+  (t) => [
+    index('budget_categories_budget_idx').on(t.budgetId),
+    index('budget_categories_category_idx').on(t.categoryId),
+  ],
+);
+
 export const OUTBOX_OPS = ['upsert', 'delete'] as const;
 export const OUTBOX_STATUSES = ['pending', 'in_flight', 'needs_attention'] as const;
-export const OUTBOX_ENTITIES = ['account', 'category', 'transaction'] as const;
+export const OUTBOX_ENTITIES = ['account', 'category', 'transaction', 'budget'] as const;
 export type OutboxEntity = (typeof OUTBOX_ENTITIES)[number];
 
 /** Local-only queue of changes waiting to be pushed to the server (plan §27). */
@@ -139,3 +174,5 @@ export type CategoryRow = typeof categories.$inferSelect;
 export type TransactionRow = typeof transactions.$inferSelect;
 export type TransactionEntryRow = typeof transactionEntries.$inferSelect;
 export type OutboxRow = typeof outbox.$inferSelect;
+export type BudgetRow = typeof budgets.$inferSelect;
+export type BudgetCategoryRow = typeof budgetCategories.$inferSelect;

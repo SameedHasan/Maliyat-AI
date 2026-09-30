@@ -4,11 +4,21 @@ import { createJSONStorage, persist } from 'zustand/middleware';
 
 export type ThemePreference = 'system' | 'light' | 'dark';
 
+/** Seconds in the background before the app locks again. */
+export const LOCK_TIMEOUTS = [0, 60, 300, 900] as const;
+export type LockTimeout = (typeof LOCK_TIMEOUTS)[number];
+
 interface PreferencesState {
   theme: ThemePreference;
   hideAmounts: boolean;
+  appLockEnabled: boolean;
+  lockTimeout: LockTimeout;
+  blockScreenshots: boolean;
   setTheme: (theme: ThemePreference) => void;
   toggleHideAmounts: () => void;
+  setAppLockEnabled: (enabled: boolean) => void;
+  setLockTimeout: (timeout: LockTimeout) => void;
+  setBlockScreenshots: (enabled: boolean) => void;
 }
 
 // Synchronous storage so preferences are hydrated before the first frame (no theme flash).
@@ -25,14 +35,26 @@ export const usePreferences = create<PreferencesState>()(
     (set) => ({
       theme: 'system',
       hideAmounts: false,
+      appLockEnabled: false,
+      lockTimeout: 60,
+      blockScreenshots: false,
       setTheme: (theme) => set({ theme }),
       toggleHideAmounts: () => set((s) => ({ hideAmounts: !s.hideAmounts })),
+      setAppLockEnabled: (appLockEnabled) => set({ appLockEnabled }),
+      setLockTimeout: (lockTimeout) => set({ lockTimeout }),
+      setBlockScreenshots: (blockScreenshots) => set({ blockScreenshots }),
     }),
     {
       name: 'maliyat.preferences',
       version: 1,
       storage,
-      partialize: ({ theme, hideAmounts }) => ({ theme, hideAmounts }),
+      partialize: ({ theme, hideAmounts, appLockEnabled, lockTimeout, blockScreenshots }) => ({
+        theme,
+        hideAmounts,
+        appLockEnabled,
+        lockTimeout,
+        blockScreenshots,
+      }),
     },
   ),
 );

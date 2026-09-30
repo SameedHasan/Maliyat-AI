@@ -1,8 +1,15 @@
-import { and, asc, eq, isNull, ne, sql } from 'drizzle-orm';
+import { and, asc, eq, gte, isNull, lt, lte, ne, sql } from 'drizzle-orm';
 
-import { accounts, transactionEntries, transactions } from '@/db/schema';
+import { accounts, categories, transactionEntries, transactions } from '@/db/schema';
 import type { DbExecutor } from '@/db/types';
-import { toLocalDate, type LocalDate } from '@/domain/dates';
+import {
+  addMonths,
+  monthKey,
+  monthRange,
+  toLocalDate,
+  type DateRange,
+  type LocalDate,
+} from '@/domain/dates';
 import {
   accountInputSchema,
   accountUpdateSchema,
@@ -18,6 +25,20 @@ import { insertTransaction } from './transactions';
 
 export interface AccountBalance {
   accountId: string;
+  balanceMinor: number;
+}
+
+/** Positive magnitudes; expenses are net of refunds, income of reversals. */
+export interface AccountActivity {
+  incomeMinor: number;
+  expenseMinor: number;
+  transfersInMinor: number;
+  transfersOutMinor: number;
+}
+
+export interface BalancePoint {
+  /** 'YYYY-MM' */
+  month: string;
   balanceMinor: number;
 }
 
@@ -200,7 +221,125 @@ export function createAccountsRepository(ctx: RepoContext) {
     });
   }
 
-  return { get, list, balances, balanceOf, create, update, setArchived, reconcile };
+  /** Income, expenses and transfers touching one account within a date range. */
+  function activity(id: string, range: DateRange): AccountActivity {
+    const row = db
+      .select({
+        incomeMinor: sql<number>`coalesce(sum(case when ${categories.kind} = 'income' then ${transactionEntries.amountMinor} else 0 end), 0)`,
+        expenseMinor: sql<number>`coalesce(sum(case when ${categories.kind} = 'expense' then ${transactionEntries.amountMinor} else 0 end), 0)`,
+        transfersInMinor: sql<number>`coalesce(sum(case when ${transactions.kind} = 'transfer' and ${transactionEntries.categoryId} is null and ${transactionEntries.amountMinor} > 0 then ${transactionEntries.amountMinor} else 0 end), 0)`,
+        transfersOutMinor: sql<number>`coalesce(sum(case when ${transactions.kind} = 'transfer' and ${transactionEntries.categoryId} is null and ${transactionEntries.amountMinor} < 0 then ${transactionEntries.amountMinor} else 0 end), 0)`,
+      })
+      .from(transactionEntries)
+      .innerJoin(transactions, eq(transactions.id, transactionEntries.transactionId))
+      .leftJoin(categories, eq(categories.id, transactionEntries.categoryId))
+      .where(
+        and(
+          eq(transactionEntries.userId, userId),
+          eq(transactionEntries.accountId, id),
+          isNull(transactions.deletedAt),
+          isNull(transactionEntries.deletedAt),
+          ne(transactions.status, 'void'),
+          gte(transactions.occurredOn, range.start),
+          lte(transactions.occurredOn, range.end),
+        ),
+      )
+      .get();
+    return {
+      incomeMinor: Number(row?.incomeMinor ?? 0),
+      expenseMinor: 0 - Number(row?.expenseMinor ?? 0),
+      transfersInMinor: Number(row?.transfersInMinor ?? 0),
+      transfersOutMinor: 0 - Number(row?.transfersOutMinor ?? 0),
+    };
+  }
+
+  /** Month-end balances for the `months` months ending with the month containing `end`. */
+  function balanceHistory(id: string, end: LocalDate, months: number): BalancePoint[] {
+    const count = Math.max(1, Math.min(months, 120));
+    const first = monthRange(addMonths(end, -(count - 1))).start;
+    const baseConditions = and(
+      eq(transactionEntries.userId, userId),
+      eq(transactionEntries.accountId, id),
+      isNull(transactions.deletedAt),
+      isNull(transactionEntries.deletedAt),
+      ne(transactions.status, 'void'),
+    );
+    const opening = db
+      .select({ total: sql<number>`coalesce(sum(${transactionEntries.amountMinor}), 0)` })
+      .from(transactionEntries)
+      .innerJoin(transactions, eq(transactions.id, transactionEntries.transactionId))
+      .where(and(baseConditions, lt(transactions.occurredOn, first)))
+      .get();
+    const monthExpr = sql<string>`substr(${transactions.occurredOn}, 1, 7)`;
+    const monthly = db
+      .select({
+        month: monthExpr,
+        total: sql<number>`coalesce(sum(${transactionEntries.amountMinor}), 0)`,
+      })
+      .from(transactionEntries)
+      .innerJoin(transactions, eq(transactions.id, transactionEntries.transactionId))
+      .where(
+        and(baseConditions, gte(transactions.occurredOn, first), lte(transactions.occurredOn, end)),
+      )
+      .groupBy(monthExpr)
+      .all();
+    const byMonth = new Map(monthly.map((m) => [m.month, Number(m.total)]));
+
+    let running = Number(opening?.total ?? 0);
+    const points: BalancePoint[] = [];
+    for (let i = 0; i < count; i++) {
+      const month = monthKey(addMonths(first, i));
+      running += byMonth.get(month) ?? 0;
+      points.push({ month, balanceMinor: running });
+    }
+    return points;
+  }
+
+  /** True when any transaction (including deleted, restorable ones) references the account. */
+  function hasHistory(id: string, executor: DbExecutor = db): boolean {
+    return (
+      executor
+        .select({ id: transactionEntries.id })
+        .from(transactionEntries)
+        .where(and(eq(transactionEntries.userId, userId), eq(transactionEntries.accountId, id)))
+        .limit(1)
+        .get() !== undefined
+    );
+  }
+
+  /** Only accounts without history can be deleted; others must be archived. */
+  function remove(id: string): void {
+    db.transaction((tx) => {
+      const existing = getOrThrow(id, tx);
+      if (hasHistory(id, tx)) {
+        throw new RepositoryError('account_has_history', 'Account has transactions');
+      }
+      const now = timestamp(ctx);
+      tx.update(accounts).set({ deletedAt: now, updatedAt: now }).where(eq(accounts.id, id)).run();
+      enqueueChange(tx, ctx, {
+        entity: 'account',
+        recordId: id,
+        op: 'delete',
+        payload: { ...existing, deletedAt: now, updatedAt: now },
+        baseVersion: existing.version,
+      });
+    });
+  }
+
+  return {
+    get,
+    list,
+    balances,
+    balanceOf,
+    create,
+    update,
+    setArchived,
+    reconcile,
+    activity,
+    balanceHistory,
+    hasHistory,
+    remove,
+  };
 }
 
 export type AccountsRepository = ReturnType<typeof createAccountsRepository>;

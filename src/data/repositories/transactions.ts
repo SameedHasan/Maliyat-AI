@@ -1,4 +1,19 @@
-import { and, desc, eq, inArray, isNull, lt, or } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  exists,
+  gte,
+  inArray,
+  isNull,
+  lt,
+  lte,
+  or,
+  sql,
+  type SQL,
+} from 'drizzle-orm';
+import { alias } from 'drizzle-orm/sqlite-core';
 
 import { accounts, categories, transactionEntries, transactions } from '@/db/schema';
 import type { DbExecutor } from '@/db/types';
@@ -13,6 +28,7 @@ import type {
   Transaction,
   TransactionEntry,
   TransactionKind,
+  TransactionSource,
   TransactionWithEntries,
 } from '@/domain/types';
 
@@ -272,6 +288,93 @@ export interface TransactionPage {
   nextCursor: TransactionCursor | null;
 }
 
+export interface TransactionFilters {
+  /** Matches payee or notes (case-insensitive). */
+  search?: string;
+  kinds?: readonly TransactionKind[];
+  accountIds?: readonly string[];
+  /** A parent category also matches its subcategories. */
+  categoryIds?: readonly string[];
+  from?: LocalDate;
+  to?: LocalDate;
+  /** Compared with the absolute amount of any entry. */
+  minAmountMinor?: number;
+  maxAmountMinor?: number;
+  sources?: readonly TransactionSource[];
+}
+
+export interface ExportEntryRow {
+  transactionId: string;
+  occurredOn: LocalDate;
+  kind: TransactionKind;
+  status: Transaction['status'];
+  payee: string | null;
+  notes: string | null;
+  source: TransactionSource;
+  accountName: string;
+  categoryName: string | null;
+  parentCategoryName: string | null;
+  amountMinor: number;
+  currency: TransactionEntry['currency'];
+}
+
+function escapeLike(text: string): string {
+  return text.replace(/[\\%_]/g, (c) => `\\${c}`);
+}
+
+function filterConditions(executor: DbExecutor, userId: string, filters: TransactionFilters) {
+  const entryConditions: SQL[] = [];
+  if (filters.accountIds?.length) {
+    entryConditions.push(inArray(transactionEntries.accountId, [...filters.accountIds]));
+  }
+  if (filters.categoryIds?.length) {
+    const children = executor
+      .select({ id: categories.id })
+      .from(categories)
+      .where(
+        and(eq(categories.userId, userId), inArray(categories.parentId, [...filters.categoryIds])),
+      )
+      .all()
+      .map((c) => c.id);
+    entryConditions.push(
+      inArray(transactionEntries.categoryId, [...filters.categoryIds, ...children]),
+    );
+  }
+  if (filters.minAmountMinor !== undefined) {
+    entryConditions.push(sql`abs(${transactionEntries.amountMinor}) >= ${filters.minAmountMinor}`);
+  }
+  if (filters.maxAmountMinor !== undefined) {
+    entryConditions.push(sql`abs(${transactionEntries.amountMinor}) <= ${filters.maxAmountMinor}`);
+  }
+
+  const search = filters.search?.trim();
+  const pattern = search ? `%${escapeLike(search)}%` : null;
+
+  return [
+    filters.kinds?.length ? inArray(transactions.kind, [...filters.kinds]) : undefined,
+    filters.sources?.length ? inArray(transactions.source, [...filters.sources]) : undefined,
+    filters.from ? gte(transactions.occurredOn, filters.from) : undefined,
+    filters.to ? lte(transactions.occurredOn, filters.to) : undefined,
+    pattern
+      ? sql`(${transactions.payee} like ${pattern} escape '\\' or ${transactions.notes} like ${pattern} escape '\\')`
+      : undefined,
+    entryConditions.length
+      ? exists(
+          executor
+            .select({ one: sql`1` })
+            .from(transactionEntries)
+            .where(
+              and(
+                eq(transactionEntries.transactionId, transactions.id),
+                isNull(transactionEntries.deletedAt),
+                ...entryConditions,
+              ),
+            ),
+        )
+      : undefined,
+  ];
+}
+
 export function createTransactionsRepository(ctx: RepoContext) {
   const { db, userId } = ctx;
 
@@ -296,7 +399,11 @@ export function createTransactionsRepository(ctx: RepoContext) {
 
   /** Newest first, keyset-paginated on (occurred_on DESC, id DESC). */
   function list(
-    options: { limit?: number; cursor?: TransactionCursor | null } = {},
+    options: {
+      limit?: number;
+      cursor?: TransactionCursor | null;
+      filters?: TransactionFilters;
+    } = {},
   ): TransactionPage {
     const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
     const { cursor } = options;
@@ -307,6 +414,7 @@ export function createTransactionsRepository(ctx: RepoContext) {
         and(
           eq(transactions.userId, userId),
           isNull(transactions.deletedAt),
+          ...filterConditions(db, userId, options.filters ?? {}),
           cursor
             ? or(
                 lt(transactions.occurredOn, cursor.occurredOn),
@@ -395,7 +503,58 @@ export function createTransactionsRepository(ctx: RepoContext) {
     setDeleted(id, false);
   }
 
-  return { get, list, create, update, remove, restore };
+  /** Refunds recorded against an expense. */
+  function refundsOf(id: string): TransactionWithEntries[] {
+    const headers = db
+      .select()
+      .from(transactions)
+      .where(
+        and(
+          eq(transactions.userId, userId),
+          eq(transactions.refundOfId, id),
+          isNull(transactions.deletedAt),
+        ),
+      )
+      .orderBy(desc(transactions.occurredOn))
+      .all();
+    return withEntries(db, headers);
+  }
+
+  /** One row per entry (splits share a transaction id), oldest first, for CSV export. */
+  function exportEntries(): ExportEntryRow[] {
+    const parent = alias(categories, 'parent_category');
+    return db
+      .select({
+        transactionId: transactions.id,
+        occurredOn: transactions.occurredOn,
+        kind: transactions.kind,
+        status: transactions.status,
+        payee: transactions.payee,
+        notes: transactions.notes,
+        source: transactions.source,
+        accountName: accounts.name,
+        categoryName: categories.name,
+        parentCategoryName: parent.name,
+        amountMinor: transactionEntries.amountMinor,
+        currency: transactionEntries.currency,
+      })
+      .from(transactionEntries)
+      .innerJoin(transactions, eq(transactions.id, transactionEntries.transactionId))
+      .innerJoin(accounts, eq(accounts.id, transactionEntries.accountId))
+      .leftJoin(categories, eq(categories.id, transactionEntries.categoryId))
+      .leftJoin(parent, eq(parent.id, categories.parentId))
+      .where(
+        and(
+          eq(transactions.userId, userId),
+          isNull(transactions.deletedAt),
+          isNull(transactionEntries.deletedAt),
+        ),
+      )
+      .orderBy(asc(transactions.occurredOn), asc(transactions.id))
+      .all();
+  }
+
+  return { get, list, create, update, remove, restore, refundsOf, exportEntries };
 }
 
 export type TransactionsRepository = ReturnType<typeof createTransactionsRepository>;

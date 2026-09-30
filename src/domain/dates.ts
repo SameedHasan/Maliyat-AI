@@ -24,17 +24,84 @@ export function toLocalDate(instant: Date, timeZone: string = DEFAULT_TIMEZONE):
   return `${y}-${m}-${d}`;
 }
 
+/** An inclusive range of calendar dates. */
+export interface DateRange {
+  start: LocalDate;
+  end: LocalDate;
+}
+
+const DAY_MS = 86_400_000;
+
+function parts(date: LocalDate): [number, number, number] {
+  return date.split('-').map(Number) as [number, number, number];
+}
+
+function fromUtc(date: Date): LocalDate {
+  return date.toISOString().slice(0, 10);
+}
+
 export function addDays(date: LocalDate, days: number): LocalDate {
-  const [y, m, d] = date.split('-').map(Number) as [number, number, number];
-  const next = new Date(Date.UTC(y, m - 1, d + days));
-  return next.toISOString().slice(0, 10);
+  const [y, m, d] = parts(date);
+  return fromUtc(new Date(Date.UTC(y, m - 1, d + days)));
+}
+
+/** Moves by whole months, clamping the day (31 Jan + 1 month = 28/29 Feb). */
+export function addMonths(date: LocalDate, months: number): LocalDate {
+  const [y, m, d] = parts(date);
+  const lastDay = new Date(Date.UTC(y, m - 1 + months + 1, 0)).getUTCDate();
+  return fromUtc(new Date(Date.UTC(y, m - 1 + months, Math.min(d, lastDay))));
+}
+
+/** 0 = Monday … 6 = Sunday. */
+export function dayOfWeek(date: LocalDate): number {
+  const [y, m, d] = parts(date);
+  return (new Date(Date.UTC(y, m - 1, d)).getUTCDay() + 6) % 7;
+}
+
+/** Weeks start on Monday. */
+export function startOfWeek(date: LocalDate): LocalDate {
+  return addDays(date, -dayOfWeek(date));
+}
+
+/** Number of calendar days in the inclusive range. */
+export function daysInRange(range: DateRange): number {
+  const [ys, ms, ds] = parts(range.start);
+  const [ye, me, de] = parts(range.end);
+  return Math.round((Date.UTC(ye, me - 1, de) - Date.UTC(ys, ms - 1, ds)) / DAY_MS) + 1;
+}
+
+/** "YYYY-MM" */
+export function monthKey(date: LocalDate): string {
+  return date.slice(0, 7);
+}
+
+export function dayOfMonth(date: LocalDate): number {
+  return parts(date)[2];
 }
 
 /** First and last calendar day of the month containing `date`. */
-export function monthRange(date: LocalDate): { start: LocalDate; end: LocalDate } {
-  const [y, m] = date.split('-').map(Number) as [number, number];
+export function monthRange(date: LocalDate): DateRange {
+  const [y, m] = parts(date);
   const start = `${y}-${String(m).padStart(2, '0')}-01`;
   const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
   const end = `${y}-${String(m).padStart(2, '0')}-${String(last).padStart(2, '0')}`;
   return { start, end };
+}
+
+export function isInRange(date: LocalDate, range: DateRange): boolean {
+  return date >= range.start && date <= range.end;
+}
+
+/** Midnight on `date` in the device's local time, for native date pickers. */
+export function localDateToDate(date: LocalDate): Date {
+  const [y, m, d] = parts(date);
+  return new Date(y, m - 1, d);
+}
+
+/** The calendar date a native date picker selected (device-local fields). */
+export function dateToLocalDate(value: Date): LocalDate {
+  const y = value.getFullYear();
+  const m = String(value.getMonth() + 1).padStart(2, '0');
+  const d = String(value.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 }

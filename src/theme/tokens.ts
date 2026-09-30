@@ -17,6 +17,8 @@ export interface ColorTokens {
   danger: string;
   warning: string;
   info: string;
+  /** Backdrop behind sheets and dialogs. */
+  scrim: string;
   charts: readonly [string, string, string, string, string, string];
 }
 
@@ -38,6 +40,7 @@ const light: ColorTokens = {
   danger: '#B42D25',
   warning: '#8F5600',
   info: '#1D5FD1',
+  scrim: 'rgba(17, 19, 24, 0.4)',
   charts: ['#2447C7', '#0B7A52', '#C77A12', '#8A3FB8', '#1F8FA3', '#B8475B'],
 };
 
@@ -58,6 +61,7 @@ const dark: ColorTokens = {
   danger: '#FF8A80',
   warning: '#F2B35B',
   info: '#79A8FF',
+  scrim: 'rgba(0, 0, 0, 0.6)',
   charts: ['#8EA8FF', '#4CD49A', '#F2B35B', '#C79BF2', '#5FC9DB', '#F28DA0'],
 };
 

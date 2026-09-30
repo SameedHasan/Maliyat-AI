@@ -1,8 +1,9 @@
 import { z } from 'zod';
 
+import { DEFAULT_ALERT_THRESHOLDS } from './budgets';
 import { isLocalDate } from './dates';
 import { CURRENCY_CODES } from './money';
-import { ACCOUNT_TYPES, TRANSACTION_KINDS, TRANSACTION_SOURCES } from './types';
+import { ACCOUNT_TYPES, BUDGET_PERIODS, TRANSACTION_KINDS, TRANSACTION_SOURCES } from './types';
 
 const optionalText = (max: number) =>
   z
@@ -96,3 +97,32 @@ export const transactionInputSchema = z.object({
 });
 export type TransactionInput = z.input<typeof transactionInputSchema>;
 export type TransactionInputParsed = z.output<typeof transactionInputSchema>;
+
+export const budgetInputSchema = z
+  .object({
+    name: z.string().trim().min(1).max(60),
+    period: z.enum(BUDGET_PERIODS),
+    startOn: localDateSchema,
+    endOn: localDateSchema.nullish().transform((value) => value ?? null),
+    amountMinor: z.int().positive(),
+    currency: z.enum(CURRENCY_CODES).default('PKR'),
+    rollover: z.boolean().default(false),
+    alertThresholds: z
+      .array(z.int().min(1).max(200))
+      .max(5)
+      .default([...DEFAULT_ALERT_THRESHOLDS])
+      .transform((values) => [...new Set(values)].sort((a, b) => a - b)),
+    categoryIds: z.array(z.uuid()).min(1).max(100),
+  })
+  .refine((b) => b.period !== 'custom' || (b.endOn !== null && b.endOn >= b.startOn), {
+    message: 'custom_range_invalid',
+    path: ['endOn'],
+  })
+  .transform((b) => ({
+    ...b,
+    endOn: b.period === 'custom' ? b.endOn : null,
+    rollover: b.period === 'custom' ? false : b.rollover,
+    categoryIds: [...new Set(b.categoryIds)],
+  }));
+export type BudgetInput = z.input<typeof budgetInputSchema>;
+export type BudgetInputParsed = z.output<typeof budgetInputSchema>;

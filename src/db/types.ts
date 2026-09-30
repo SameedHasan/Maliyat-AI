@@ -1,6 +1,13 @@
 import type { BaseSQLiteDatabase } from 'drizzle-orm/sqlite-core';
 
-import type { Account, Category, Transaction, TransactionEntry } from '@/domain/types';
+import type {
+  Account,
+  Budget,
+  BudgetCategory,
+  Category,
+  Transaction,
+  TransactionEntry,
+} from '@/domain/types';
 
 import type * as schema from './schema';
 
@@ -8,6 +15,8 @@ type AccountRow = schema.AccountRow;
 type CategoryRow = schema.CategoryRow;
 type TransactionRow = schema.TransactionRow;
 type TransactionEntryRow = schema.TransactionEntryRow;
+type BudgetRow = schema.BudgetRow;
+type BudgetCategoryRow = schema.BudgetCategoryRow;
 
 /**
  * Any synchronous Drizzle SQLite database with our schema: expo-sqlite on device,
@@ -27,4 +36,6 @@ export const rowsMatchDomain: [
   Same<CategoryRow, Category>,
   Same<TransactionRow, Transaction>,
   Same<TransactionEntryRow, TransactionEntry>,
-] = [true, true, true, true];
+  Same<BudgetRow, Budget>,
+  Same<BudgetCategoryRow, BudgetCategory>,
+] = [true, true, true, true, true, true];

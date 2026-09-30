@@ -13,7 +13,10 @@ import { StyleSheet } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
+import { SnackbarHost } from '@/components/ui';
 import { DatabaseProvider } from '@/data/DatabaseProvider';
+import { AppLockGate } from '@/features/security/AppLockGate';
+import { PrivacyGuard } from '@/features/security/PrivacyGuard';
 import { ThemeProvider, useTheme } from '@/theme';
 
 void SplashScreen.preventAutoHideAsync();
@@ -44,15 +47,35 @@ function NavigationTheme({ children }: PropsWithChildren) {
   );
 }
 
+function RootStack() {
+  const theme = useTheme();
+  return (
+    <Stack
+      screenOptions={{
+        headerStyle: { backgroundColor: theme.colors.background },
+        headerShadowVisible: false,
+        headerTintColor: theme.colors.text,
+        headerTitleStyle: theme.typography.title,
+        contentStyle: { backgroundColor: theme.colors.background },
+      }}>
+      <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+    </Stack>
+  );
+}
+
 export default function RootLayout() {
   return (
     <GestureHandlerRootView style={styles.root}>
       <SafeAreaProvider>
         <ThemeProvider>
           <NavigationTheme>
-            <DatabaseProvider>
-              <Stack screenOptions={{ headerShown: false }} />
-            </DatabaseProvider>
+            <PrivacyGuard />
+            <AppLockGate>
+              <DatabaseProvider>
+                <RootStack />
+                <SnackbarHost />
+              </DatabaseProvider>
+            </AppLockGate>
           </NavigationTheme>
         </ThemeProvider>
       </SafeAreaProvider>

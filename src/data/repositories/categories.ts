@@ -1,11 +1,18 @@
 import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 
-import { categories, transactionEntries, transactions } from '@/db/schema';
+import {
+  budgetCategories,
+  budgets,
+  categories,
+  transactionEntries,
+  transactions,
+} from '@/db/schema';
 import type { DbExecutor } from '@/db/types';
 import { DEFAULT_CATEGORIES } from '@/domain/defaultCategories';
 import { categoryInputSchema, type CategoryInput } from '@/domain/schemas';
 import type { Category, CategoryKind, TransactionWithEntries } from '@/domain/types';
 
+import { enqueueBudget } from './budgets';
 import { timestamp, type RepoContext } from './context';
 import { parseOrThrow, RepositoryError } from './errors';
 import { enqueueChange } from './outbox';
@@ -155,6 +162,58 @@ export function createCategoriesRepository(ctx: RepoContext) {
     });
   }
 
+  /** Budgets tracking a deleted category follow its replacement, or drop it. */
+  function relinkBudgets(
+    tx: DbExecutor,
+    id: string,
+    replacementId: string | undefined,
+    now: string,
+  ) {
+    const links = tx
+      .select()
+      .from(budgetCategories)
+      .where(and(eq(budgetCategories.categoryId, id), isNull(budgetCategories.deletedAt)))
+      .all();
+    for (const link of links) {
+      const alreadyTracked =
+        replacementId !== undefined &&
+        tx
+          .select({ id: budgetCategories.id })
+          .from(budgetCategories)
+          .where(
+            and(
+              eq(budgetCategories.budgetId, link.budgetId),
+              eq(budgetCategories.categoryId, replacementId),
+            ),
+          )
+          .get() !== undefined;
+      if (replacementId === undefined || alreadyTracked) {
+        tx.delete(budgetCategories).where(eq(budgetCategories.id, link.id)).run();
+      } else {
+        tx.update(budgetCategories)
+          .set({ categoryId: replacementId, updatedAt: now })
+          .where(eq(budgetCategories.id, link.id))
+          .run();
+      }
+      const budget = tx.select().from(budgets).where(eq(budgets.id, link.budgetId)).get();
+      if (budget && !budget.deletedAt) {
+        const next = { ...budget, updatedAt: now };
+        tx.update(budgets).set({ updatedAt: now }).where(eq(budgets.id, budget.id)).run();
+        enqueueBudget(tx, ctx, next, 'upsert', budget.version);
+      }
+    }
+  }
+
+  /** Number of transactions (including restorable deleted ones) using the category. */
+  function usageCount(id: string): number {
+    const row = db
+      .select({ count: sql<number>`count(distinct ${transactionEntries.transactionId})` })
+      .from(transactionEntries)
+      .where(eq(transactionEntries.categoryId, id))
+      .get();
+    return Number(row?.count ?? 0);
+  }
+
   /**
    * Deletes a category. If transactions use it, `replacementId` (same kind) is required
    * and those entries are moved to it; categories with children must be emptied first.
@@ -226,6 +285,7 @@ export function createCategoriesRepository(ctx: RepoContext) {
       }
 
       const now = timestamp(ctx);
+      relinkBudgets(tx, id, affected.length > 0 ? replacementId : undefined, now);
       const deleted: Category = { ...existing, deletedAt: now, updatedAt: now };
       tx.update(categories).set(deleted).where(eq(categories.id, id)).run();
       enqueueChange(tx, ctx, {
@@ -292,7 +352,19 @@ export function createCategoriesRepository(ctx: RepoContext) {
     return ids;
   }
 
-  return { get, list, tree, create, update, setArchived, reorder, remove, hasAny, seedDefaults };
+  return {
+    get,
+    list,
+    tree,
+    create,
+    update,
+    setArchived,
+    reorder,
+    usageCount,
+    remove,
+    hasAny,
+    seedDefaults,
+  };
 }
 
 export type CategoriesRepository = ReturnType<typeof createCategoriesRepository>;

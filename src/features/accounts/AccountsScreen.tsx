@@ -1,7 +1,10 @@
+import { router } from 'expo-router';
+import { useState } from 'react';
 import { SectionList, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
 import {
+  Button,
   Divider,
   EmptyState,
   ErrorState,
@@ -9,47 +12,33 @@ import {
   LoadingState,
   MoneyText,
   Screen,
-  SectionHeader,
   Stat,
-  type IconName,
+  Text,
 } from '@/components/ui';
 import type { Repositories } from '@/data/repositories';
 import { useLiveQuery } from '@/data/useLiveQuery';
+import { displayBalance } from '@/domain/accountForm';
 import { availableCredit } from '@/domain/ledger';
-import { formatMoney, money, type CurrencyCode } from '@/domain/money';
-import type { Account, AccountType } from '@/domain/types';
+import { formatMoney, money } from '@/domain/money';
 import { usePreferences } from '@/store/preferences';
 import { makeStyles } from '@/theme';
 
+import { ACCOUNT_TYPE_ICONS, groupAccounts, type AccountWithBalance } from './groups';
 import { BASE_CURRENCY, netWorth } from './netWorth';
 
-const TYPE_ICONS: Record<AccountType, IconName> = {
-  cash: 'cash-outline',
-  bank: 'business-outline',
-  wallet: 'phone-portrait-outline',
-  credit_card: 'card-outline',
-  loan: 'document-text-outline',
-  committee: 'people-outline',
-  other_asset: 'briefcase-outline',
-  other_liability: 'remove-circle-outline',
-};
-
-interface AccountRowData {
-  account: Account;
-  balanceMinor: number;
-}
-
 function loadAccounts(repos: Repositories) {
-  const accounts = repos.accounts.list();
   const balances = repos.accounts.balances();
-  const rows = accounts.map((account) => ({
-    account,
-    balanceMinor: balances.get(account.id) ?? 0,
-  }));
+  const active = repos.accounts.list();
+  const archived = repos.accounts
+    .list({ includeArchived: true })
+    .filter((account) => account.isArchived);
   return {
-    worth: netWorth(accounts, balances),
-    assets: rows.filter((r) => r.account.accountClass === 'asset'),
-    liabilities: rows.filter((r) => r.account.accountClass === 'liability'),
+    worth: netWorth(active, balances),
+    sections: groupAccounts(active, balances),
+    archived: archived.map((account) => ({
+      account,
+      balanceMinor: balances.get(account.id) ?? 0,
+    })),
   };
 }
 
@@ -57,25 +46,42 @@ export function AccountsScreen() {
   const { t } = useTranslation();
   const styles = useStyles();
   const hideAmounts = usePreferences((s) => s.hideAmounts);
+  const [showArchived, setShowArchived] = useState(false);
   const query = useLiveQuery(loadAccounts);
 
   if (query.status === 'loading') return <LoadingState />;
   if (query.status === 'error') return <ErrorState onRetry={query.reload} />;
 
-  const { worth, assets, liabilities } = query.data;
-  const sections = [
-    { key: 'assets', title: t('accounts.assets'), data: assets },
-    { key: 'liabilities', title: t('accounts.liabilities'), data: liabilities },
-  ].filter((s) => s.data.length > 0);
+  const { worth, sections, archived } = query.data;
+  const listSections = [
+    ...sections.map((s) => ({
+      key: s.group,
+      title: t(`accounts.groups.${s.group}`),
+      subtotalMinor: s.subtotalMinor as number | null,
+      liability: s.data.every((row) => row.account.accountClass === 'liability'),
+      data: s.data,
+    })),
+    ...(showArchived && archived.length > 0
+      ? [
+          {
+            key: 'archived',
+            title: t('accounts.archived'),
+            subtotalMinor: null,
+            liability: false,
+            data: archived,
+          },
+        ]
+      : []),
+  ];
 
-  const subtitleFor = ({ account, balanceMinor }: AccountRowData) => {
+  const subtitleFor = ({ account, balanceMinor }: AccountWithBalance) => {
     const parts: string[] = [t(`accounts.types.${account.type}`)];
     if (account.last4) parts.push(`•• ${account.last4}`);
+    if (account.accountClass === 'liability') parts.push(t('accounts.owed'));
     if (account.type === 'credit_card' && account.creditLimitMinor !== null) {
-      const currency = account.currency as CurrencyCode;
       const available = availableCredit(
-        money(account.creditLimitMinor, currency),
-        money(balanceMinor, currency),
+        money(account.creditLimitMinor, account.currency),
+        money(balanceMinor, account.currency),
       );
       parts.push(
         t('accounts.availableCredit', { amount: formatMoney(available, { hide: hideAmounts }) }),
@@ -84,51 +90,102 @@ export function AccountsScreen() {
     return parts.join(' · ');
   };
 
+  if (sections.length === 0 && archived.length === 0) {
+    return (
+      <Screen>
+        <EmptyState
+          icon="wallet-outline"
+          title={t('accounts.emptyTitle')}
+          message={t('accounts.emptyBody')}
+          action={{ label: t('accounts.add'), onPress: () => router.push('/accounts/new') }}
+        />
+      </Screen>
+    );
+  }
+
   return (
     <Screen>
       <SectionList
-        sections={sections}
+        sections={listSections}
         keyExtractor={(item) => item.account.id}
         stickySectionHeadersEnabled={false}
         ListHeaderComponent={
-          sections.length > 0 ? (
-            <View style={styles.summary}>
+          <View style={styles.summary}>
+            <Stat
+              label={t('accounts.total')}
+              value={
+                <MoneyText amountMinor={worth.netMinor} currency={BASE_CURRENCY} variant="title" />
+              }
+            />
+            <View style={styles.summaryRow}>
               <Stat
-                label={t('accounts.total')}
+                label={t('accounts.assets')}
+                value={<MoneyText amountMinor={worth.assetsMinor} currency={BASE_CURRENCY} />}
+              />
+              <Stat
+                label={t('accounts.liabilities')}
                 value={
-                  <MoneyText
-                    amountMinor={worth.netMinor}
-                    currency={BASE_CURRENCY}
-                    variant="title"
-                  />
+                  <MoneyText amountMinor={0 - worth.liabilitiesMinor} currency={BASE_CURRENCY} />
                 }
               />
             </View>
-          ) : null
+          </View>
         }
-        renderSectionHeader={({ section }) => <SectionHeader title={section.title} />}
+        renderSectionHeader={({ section }) => (
+          <View style={styles.sectionHeader}>
+            <Text variant="caption" color="textSecondary" accessibilityRole="header">
+              {section.title.toUpperCase()}
+            </Text>
+            {section.subtotalMinor !== null ? (
+              <MoneyText
+                amountMinor={section.liability ? 0 - section.subtotalMinor : section.subtotalMinor}
+                currency={BASE_CURRENCY}
+                variant="bodySmall"
+                tone="muted"
+              />
+            ) : null}
+          </View>
+        )}
         renderItem={({ item }) => (
           <ListItem
-            icon={TYPE_ICONS[item.account.type]}
+            icon={ACCOUNT_TYPE_ICONS[item.account.type]}
             title={item.account.name}
             subtitle={subtitleFor(item)}
+            accessibilityHint={t('accounts.openHint')}
+            onPress={() =>
+              router.push({ pathname: '/accounts/[id]', params: { id: item.account.id } })
+            }
             trailing={
               <MoneyText
-                amountMinor={item.balanceMinor}
-                currency={item.account.currency as CurrencyCode}
+                amountMinor={displayBalance(item.account.type, item.balanceMinor)}
+                currency={item.account.currency}
               />
             }
           />
         )}
         ItemSeparatorComponent={InsetDivider}
-        ListEmptyComponent={
-          <EmptyState
-            icon="wallet-outline"
-            title={t('accounts.emptyTitle')}
-            message={t('accounts.emptyBody')}
-          />
+        ListFooterComponent={
+          <View style={styles.footer}>
+            <Button
+              label={t('accounts.add')}
+              icon="add"
+              variant="secondary"
+              onPress={() => router.push('/accounts/new')}
+            />
+            {archived.length > 0 ? (
+              <Button
+                label={
+                  showArchived
+                    ? t('accounts.hideArchived')
+                    : t('accounts.showArchived', { count: archived.length })
+                }
+                variant="ghost"
+                onPress={() => setShowArchived((v) => !v)}
+              />
+            ) : null}
+          </View>
         }
-        contentContainerStyle={sections.length === 0 ? styles.emptyContent : styles.content}
+        contentContainerStyle={styles.content}
       />
     </Screen>
   );
@@ -139,7 +196,16 @@ function InsetDivider() {
 }
 
 const useStyles = makeStyles((t) => ({
-  summary: { paddingHorizontal: t.spacing[4], paddingTop: t.spacing[4] },
+  summary: { paddingHorizontal: t.spacing[4], paddingTop: t.spacing[4], gap: t.spacing[3] },
+  summaryRow: { flexDirection: 'row', gap: t.spacing[4] },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: t.spacing[4],
+    paddingTop: t.spacing[6],
+    paddingBottom: t.spacing[2],
+  },
   content: { paddingBottom: t.spacing[8] },
-  emptyContent: { flexGrow: 1 },
+  footer: { padding: t.spacing[4], gap: t.spacing[2] },
 }));

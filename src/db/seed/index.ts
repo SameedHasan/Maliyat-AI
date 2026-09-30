@@ -1,8 +1,10 @@
 import { insertTransactionsBulk } from '../../data/repositories/transactions';
 import type { Repositories } from '../../data/repositories';
-import { toLocalDate } from '../../domain/dates';
+import { addMonths, monthRange, toLocalDate } from '../../domain/dates';
 import {
   accounts,
+  budgetCategories,
+  budgets,
   categories,
   outbox,
   syncState,
@@ -23,6 +25,8 @@ export function clearDatabase(repos: Repositories): void {
   db.transaction((tx) => {
     tx.delete(outbox).run();
     tx.delete(syncState).run();
+    tx.delete(budgetCategories).run();
+    tx.delete(budgets).run();
     tx.delete(transactionEntries).run();
     tx.delete(transactions).run();
     tx.delete(categories).run();
@@ -78,8 +82,9 @@ export function seedDatabase(
     }).id,
   };
 
+  const today = toLocalDate(repos.ctx.now(), repos.ctx.timeZone);
   const drafts = generateSeedTransactions({
-    today: toLocalDate(repos.ctx.now(), repos.ctx.timeZone),
+    today,
     months,
     random: createRandom(seed),
     accounts: ids,
@@ -87,10 +92,33 @@ export function seedDatabase(
   });
 
   const { db } = repos.ctx;
+  const startOn = addMonths(monthRange(today).start, -3);
   db.transaction((tx) => {
     insertTransactionsBulk(tx, repos.ctx, drafts, { enqueue: false });
-    tx.delete(outbox).run();
   });
+  repos.budgets.create({
+    name: 'Food',
+    period: 'monthly',
+    startOn,
+    amountMinor: 6_000_000,
+    categoryIds: [category('food')],
+  });
+  repos.budgets.create({
+    name: 'Getting around',
+    period: 'monthly',
+    startOn,
+    amountMinor: 2_500_000,
+    rollover: true,
+    categoryIds: [category('transport')],
+  });
+  repos.budgets.create({
+    name: 'Shopping',
+    period: 'monthly',
+    startOn,
+    amountMinor: 2_000_000,
+    categoryIds: [category('shopping')],
+  });
+  db.delete(outbox).run();
 
   return { accounts: Object.keys(ids).length, transactions: drafts.length };
 }

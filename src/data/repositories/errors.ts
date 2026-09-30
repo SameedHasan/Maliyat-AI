@@ -8,7 +8,8 @@ export type RepositoryErrorCode =
   | 'not_found'
   | 'category_in_use'
   | 'category_has_children'
-  | 'invalid_parent';
+  | 'invalid_parent'
+  | 'account_has_history';
 
 export class RepositoryError extends Error {
   override name = 'RepositoryError';

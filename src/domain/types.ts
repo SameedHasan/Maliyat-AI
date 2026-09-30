@@ -115,6 +115,32 @@ export interface TransactionWithEntries extends Transaction {
   entries: TransactionEntry[];
 }
 
+export const BUDGET_PERIODS = ['monthly', 'weekly', 'custom'] as const;
+export type BudgetPeriod = (typeof BUDGET_PERIODS)[number];
+
+export interface Budget extends SyncColumns {
+  name: string;
+  period: BudgetPeriod;
+  /** Monthly/weekly budgets start counting from the period containing this date. */
+  startOn: LocalDate;
+  /** Custom budgets only. */
+  endOn: LocalDate | null;
+  amountMinor: number;
+  currency: CurrencyCode;
+  rollover: boolean;
+  /** Percentages of the budget at which the user is alerted, e.g. [80, 100]. */
+  alertThresholds: number[];
+}
+
+export interface BudgetCategory extends SyncColumns {
+  budgetId: string;
+  categoryId: string;
+}
+
+export interface BudgetWithCategories extends Budget {
+  categoryIds: string[];
+}
+
 /**
  * Whether an entry counts toward income/expense analytics and budgets. Only categorised
  * entries of user-facing categories count, so transfer legs, adjustments, opening
