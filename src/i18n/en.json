@@ -1,0 +1,124 @@
+{
+  "common": {
+    "retry": "Try again",
+    "cancel": "Cancel",
+    "seeAll": "See all",
+    "loading": "Loading…",
+    "showAmounts": "Show amounts",
+    "hideAmounts": "Hide amounts"
+  },
+  "tabs": {
+    "home": "Home",
+    "transactions": "Transactions",
+    "analytics": "Analytics",
+    "accounts": "Accounts",
+    "more": "More"
+  },
+  "states": {
+    "errorTitle": "Something went wrong",
+    "errorBody": "Your data is safe on this device. Try again, and if it keeps happening, restart the app."
+  },
+  "startup": {
+    "migrationFailedTitle": "Couldn't open your data",
+    "migrationFailedBody": "The local database could not be upgraded. Nothing has been deleted."
+  },
+  "home": {
+    "netWorth": "Net worth",
+    "assets": "Assets",
+    "liabilities": "Liabilities",
+    "thisMonth": "This month",
+    "income": "Income",
+    "spent": "Spent",
+    "recent": "Recent transactions",
+    "emptyTitle": "Welcome to Maliyat AI",
+    "emptyBody": "Add an account to start tracking. Everything stays on this phone and works offline."
+  },
+  "transactions": {
+    "emptyTitle": "No transactions yet",
+    "emptyBody": "Transactions you add will appear here, newest first.",
+    "splitCount_one": "{{count}} entry",
+    "splitCount_other": "{{count}} entries",
+    "transferBetween": "{{from}} → {{to}}"
+  },
+  "kinds": {
+    "expense": "Expense",
+    "income": "Income",
+    "transfer": "Transfer",
+    "refund": "Refund",
+    "adjustment": "Balance adjustment",
+    "opening_balance": "Opening balance"
+  },
+  "analytics": {
+    "incomeVsExpense": "Income vs. spending",
+    "net": "Net",
+    "topCategories": "Top spending categories",
+    "emptyTitle": "Nothing to analyse yet",
+    "emptyBody": "Once you record some spending this month, a breakdown will appear here.",
+    "shareOfSpending": "{{percent}}% of spending"
+  },
+  "accounts": {
+    "total": "Total",
+    "assets": "Assets",
+    "liabilities": "Liabilities",
+    "archived": "Archived",
+    "availableCredit": "Available {{amount}}",
+    "emptyTitle": "No accounts yet",
+    "emptyBody": "Add your cash, bank accounts, wallets and cards to see balances here.",
+    "types": {
+      "cash": "Cash",
+      "bank": "Bank account",
+      "wallet": "Mobile wallet",
+      "credit_card": "Credit card",
+      "loan": "Loan",
+      "committee": "Committee",
+      "other_asset": "Other asset",
+      "other_liability": "Other liability"
+    }
+  },
+  "more": {
+    "appearance": "Appearance",
+    "theme": "Theme",
+    "themeOptions": {
+      "system": "System",
+      "light": "Light",
+      "dark": "Dark"
+    },
+    "privacy": "Privacy",
+    "hideAmounts": "Hide amounts",
+    "hideAmountsHint": "Masks balances and amounts across the app.",
+    "about": "About",
+    "version": "Version {{version}}"
+  },
+  "dev": {
+    "title": "Developer",
+    "seed": "Reset & load demo data",
+    "seedHint": "Replaces everything with ~18 months of realistic activity.",
+    "seeding": "Loading demo data…",
+    "seeded": "Loaded {{count}} transactions across {{accounts}} accounts.",
+    "clear": "Clear all data",
+    "clearHint": "Deletes every local account, category and transaction.",
+    "cleared": "All local data cleared.",
+    "confirmTitle": "Are you sure?",
+    "confirmBody": "This cannot be undone.",
+    "confirm": "Continue"
+  },
+  "money": {
+    "hidden": "Amount hidden",
+    "spoken": "{{amount}} {{currency}}",
+    "spokenNegative": "minus {{amount}} {{currency}}",
+    "currency": {
+      "PKR_one": "rupee",
+      "PKR_other": "rupees",
+      "USD_one": "dollar",
+      "USD_other": "dollars",
+      "AED_one": "dirham",
+      "AED_other": "dirhams",
+      "SAR_one": "riyal",
+      "SAR_other": "riyals",
+      "GBP_one": "pound",
+      "GBP_other": "pounds",
+      "EUR_one": "euro",
+      "EUR_other": "euros"
+    }
+  }
+}
